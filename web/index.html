@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tính năng lượng - Chọn tuyến</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html,body,#map { height: 100%; margin:0; padding:0 }
+    #controls { position: absolute; top: 10px; left: 10px; z-index: 1000; background: rgba(255,255,255,0.9); padding:10px; border-radius:6px }
+    #result { max-width: 320px; white-space: pre-wrap }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <div><b>Hướng dẫn:</b> Click để chọn Start và End.</div>
+    <button id="btnRoute">Lấy tuyến</button>
+    <button id="btnCompute">Tính năng lượng</button>
+    <div id="status"></div>
+    <hr />
+    <div id="result"></div>
+  </div>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map').setView([21.028511, 105.804817], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let startMarker=null, endMarker=null, routeLayer=null, routeFeature=null, duration_s=0;
+
+    function setStatus(t){ document.getElementById('status').innerText = t }
+
+    map.on('click', function(e){
+      if(!startMarker){ startMarker = L.marker(e.latlng, {draggable:true}).addTo(map).bindPopup('Start').openPopup(); setStatus('Start set'); return }
+      if(!endMarker){ endMarker = L.marker(e.latlng, {draggable:true}).addTo(map).bindPopup('End').openPopup(); setStatus('End set'); return }
+      // reset if both exist
+      if(startMarker && endMarker){
+        map.removeLayer(startMarker); map.removeLayer(endMarker);
+        if(routeLayer) map.removeLayer(routeLayer);
+        startMarker = L.marker(e.latlng, {draggable:true}).addTo(map).bindPopup('Start').openPopup();
+        endMarker = null; routeFeature = null; setStatus('Start set (reset)');
+      }
+    });
+
+    document.getElementById('btnRoute').onclick = async function(){
+      if(!startMarker || !endMarker){ alert('Vui lòng chọn Start và End trên bản đồ'); return }
+      setStatus('Requesting route...')
+      const s = startMarker.getLatLng(); const e = endMarker.getLatLng();
+      const res = await fetch('/route', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({start:[s.lat,s.lng], end:[e.lat,e.lng]})});
+      const j = await res.json();
+      if(j.error){ setStatus('Error: '+j.error); return }
+      routeFeature = j.route;
+      duration_s = j.duration_s || 0;
+      if(routeLayer) map.removeLayer(routeLayer);
+      routeLayer = L.geoJSON(routeFeature, {style:{color:'blue', weight:4}}).addTo(map);
+      map.fitBounds(routeLayer.getBounds());
+      setStatus('Route loaded. Duration: '+duration_s+'s')
+    }
+
+    document.getElementById('btnCompute').onclick = async function(){
+      if(!routeFeature){ alert('Hãy lấy tuyến trước'); return }
+      setStatus('Computing energy...')
+      const res = await fetch('/compute', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({route: routeFeature, duration_s: duration_s})});
+      const j = await res.json();
+      if(j.error){ setStatus('Error: '+j.error); return }
+      const out = [];
+      out.push('Quãng đường (km): '+(j.quang_duong_km ?? 'N/A'));
+      out.push('Trạng thái giao thông: '+(j.traffic_status ?? 'N/A'));
+      out.push('Tổng năng lượng (kJ): '+j.total_kJ);
+      out.push('Ước nhiên liệu ANN (l): '+(j.fuel_ann_l ?? 'Không có'));
+      out.push('Chi tiết năng lượng (kJ):');
+      for(const k in j.sums_kJ) out.push('  '+k+': '+j.sums_kJ[k]);
+      document.getElementById('result').innerText = out.join('\n');
+      setStatus('Done');
+    }
+  </script>
+</body>
+</html>

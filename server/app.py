@@ -1,0 +1,161 @@
+import os
+import sys
+import json
+import importlib.util
+from flask import Flask, request, jsonify, send_from_directory
+import openrouteservice
+import pandas as pd
+from datetime import datetime, timedelta
+from geopy.distance import distance
+
+# Ensure the parent folder is on Python path so predict_fuel_ann can be imported
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+# Import ANN prediction helper
+from predict_fuel_ann import predict_fuel
+
+app = Flask(__name__, static_folder='../web', static_url_path='/')
+
+# Load energy calculation module from existing file with spaces in name
+ENERGY_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'code tinh nang luong.py'))
+if not os.path.exists(ENERGY_PATH):
+    raise FileNotFoundError(f"Could not find energy file at {ENERGY_PATH}")
+spec = importlib.util.spec_from_file_location("energy_src", ENERGY_PATH)
+energy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(energy)
+
+# ORS client
+ORS_KEY = os.getenv('ORS_API_KEY')
+if not ORS_KEY:
+    print("Warning: ORS_API_KEY not set. Set environment variable before running.")
+client = openrouteservice.Client(key=ORS_KEY) if ORS_KEY else None
+
+
+@app.route('/')
+def index():
+    return send_from_directory(app.static_folder, 'index.html')
+
+
+@app.route('/route', methods=['POST'])
+def get_route():
+    data = request.get_json()
+    start = data.get('start')  # [lat, lon]
+    end = data.get('end')
+    if not start or not end:
+        return jsonify({'error': 'start and end required'}), 400
+    if client is None:
+        return jsonify({'error': 'ORS_API_KEY not configured on server'}), 500
+
+    coords = [[start[1], start[0]], [end[1], end[0]]]  # ORS expects [lon,lat]
+    res = client.directions(coords, profile='driving-car', format='geojson')
+    # Extract duration (seconds) from properties if available
+    duration = 0
+    try:
+        segments = res['features'][0]['properties'].get('segments', [])
+        for seg in segments:
+            duration += seg.get('duration', 0)
+    except Exception:
+        duration = 0
+
+    return jsonify({'route': res['features'][0], 'duration_s': int(duration)})
+
+
+@app.route('/compute', methods=['POST'])
+def compute_energy():
+    payload = request.get_json()
+    route_feature = payload.get('route')  # geojson feature or list of coords
+    duration_s = payload.get('duration_s', None)
+    if route_feature is None:
+        return jsonify({'error': 'route required'}), 400
+
+    # Extract coordinates list as (lat, lon)
+    geom = route_feature.get('geometry') if isinstance(route_feature, dict) else None
+    if geom and geom.get('coordinates'):
+        coords = [(c[1], c[0]) for c in geom['coordinates']]
+    elif isinstance(route_feature, list):
+        coords = [(c[0], c[1]) for c in route_feature]
+    else:
+        return jsonify({'error': 'invalid route geometry'}), 400
+
+    # Get elevations for each point (may be rate-limited)
+    elevs = []
+    if client is None:
+        return jsonify({'error': 'ORS_API_KEY not configured on server'}), 500
+    for lat, lon in coords:
+        try:
+            e = client.elevation_point((lon, lat))
+            # response geometry coordinates: [lon, lat, ele]
+            ele = e.get('geometry', {}).get('coordinates', [None, None, 0])[2]
+        except Exception:
+            ele = 0
+        elevs.append(ele)
+
+    # Build timestamps distributed along distance using geopy
+    dists = [0.0]
+    for i in range(1, len(coords)):
+        d = distance(coords[i-1], coords[i]).meters
+        dists.append(d)
+    total_dist = sum(dists)
+    if duration_s is None or duration_s <= 0:
+        duration_s = max(int(total_dist / 10), 60)  # heuristic: assume average ~10 m/s
+
+    t0 = datetime.utcnow()
+    times = []
+    cum = 0.0
+    for ds in dists:
+        cum += ds
+        frac = (cum / total_dist) if total_dist > 0 else 0
+        times.append(t0 + timedelta(seconds=int(frac * duration_s)))
+
+    df = pd.DataFrame({'time': times, 'lat': [p[0] for p in coords], 'lon': [p[1] for p in coords], 'ele': elevs})
+
+    # Call energy functions from the loaded module
+    df = energy.tinh_khoang_cach(df)
+    df = energy.tinh_goc_doc(df)
+    df = energy.tinh_van_toc(df)
+    ts = energy.ThongSoXe()
+    df = energy.tinh_nang_luong_chi_tiet(df, ts)
+
+    # Traffic and route summary used by ANN
+    traffic = energy.analyze_traffic_advanced(df)
+    traffic_status = traffic.get('common_status', 'Bình thường')
+    quang_duong_km = float(df['s_km'].iloc[-1]) if len(df) > 0 else 0.0
+
+    # Summarize
+    sums = df[['E_roll_kJ', 'E_aero_kJ', 'E_inertia_kJ', 'E_grade_kJ', 'E_curve_kJ']].sum().to_dict()
+    total_kJ = sum(sums.values())
+
+    # ANN prediction
+    try:
+        fuel_ann_l = predict_fuel(
+            {
+                'E_roll_kJ': sums['E_roll_kJ'],
+                'E_aero_kJ': sums['E_aero_kJ'],
+                'E_inertia_kJ': sums['E_inertia_kJ'],
+                'E_grade_kJ': sums['E_grade_kJ'],
+                'E_curve_kJ': sums['E_curve_kJ'],
+            },
+            quang_duong_km=quang_duong_km,
+            traffic_status=traffic_status
+        )
+    except Exception as e:
+        fuel_ann_l = None
+        print(f"ANN prediction failed: {e}")
+
+    resp = {
+        'sums_kJ': {k: float(round(v, 3)) for k, v in sums.items()},
+        'total_kJ': float(round(total_kJ, 3)),
+        'fuel_ann_l': float(round(fuel_ann_l, 5)) if fuel_ann_l is not None else None,
+        'traffic_status': traffic_status,
+        'quang_duong_km': round(quang_duong_km, 3),
+        'points': [{'lat': p[0], 'lon': p[1], 'ele': e} for p, e in zip(coords, elevs)]
+    }
+    return jsonify(resp)
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    debug_mode = os.environ.get('FLASK_DEBUG', '1') == '1'
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)

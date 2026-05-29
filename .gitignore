@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+.venv/
+*.swp
+.DS_Store
+*.log
+*.sqlite3
+.idea/
+.vscode/
+server/__pycache__/
+web/__pycache__/

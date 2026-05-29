@@ -1,0 +1,8 @@
+Flask
+openrouteservice
+pandas
+geopy
+gpxpy
+requests
+tensorflow
+gunicorn
