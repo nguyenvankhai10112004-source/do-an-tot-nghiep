@@ -26,6 +26,8 @@ spec = importlib.util.spec_from_file_location("energy_src", ENERGY_PATH)
 energy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(energy)
 
+VEHICLE_FILE = os.path.join(ROOT_DIR, 'Loại_xe.csv')
+
 # ORS client
 ORS_KEY = os.getenv('ORS_API_KEY')
 if not ORS_KEY:
@@ -36,6 +38,15 @@ client = openrouteservice.Client(key=ORS_KEY) if ORS_KEY else None
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
+
+
+@app.route('/vehicles', methods=['GET'])
+def get_vehicle_list():
+    try:
+        vehicle_names = energy.get_vehicle_names(VEHICLE_FILE)
+        return jsonify({'vehicles': vehicle_names})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/route', methods=['POST'])
@@ -67,8 +78,12 @@ def compute_energy():
     payload = request.get_json()
     route_feature = payload.get('route')  # geojson feature or list of coords
     duration_s = payload.get('duration_s', None)
+    vehicle_type = payload.get('vehicle_type')
+
     if route_feature is None:
         return jsonify({'error': 'route required'}), 400
+    if not vehicle_type:
+        return jsonify({'error': 'vehicle_type required'}), 400
 
     # Extract coordinates list as (lat, lon)
     geom = route_feature.get('geometry') if isinstance(route_feature, dict) else None
@@ -115,7 +130,10 @@ def compute_energy():
     df = energy.tinh_khoang_cach(df)
     df = energy.tinh_goc_doc(df)
     df = energy.tinh_van_toc(df)
-    ts = energy.ThongSoXe()
+    try:
+        ts = energy.ThongSoXe(loai_xe=vehicle_type, loai_xe_file=VEHICLE_FILE, interactive=False)
+    except Exception as e:
+        return jsonify({'error': f'Invalid vehicle type: {e}'}), 400
     df = energy.tinh_nang_luong_chi_tiet(df, ts)
 
     # Traffic and route summary used by ANN
@@ -145,6 +163,7 @@ def compute_energy():
         print(f"ANN prediction failed: {e}")
 
     resp = {
+        'vehicle_type': vehicle_type,
         'sums_kJ': {k: float(round(v, 3)) for k, v in sums.items()},
         'total_kJ': float(round(total_kJ, 3)),
         'fuel_ann_l': float(round(fuel_ann_l, 5)) if fuel_ann_l is not None else None,

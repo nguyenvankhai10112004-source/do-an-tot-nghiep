@@ -1,24 +1,101 @@
+import argparse
 import numpy as np
 import pandas as pd
 import gpxpy
 import math
 import glob
 import os
+import sys
 from geopy.distance import distance
+
+# ===================== HỖ TRỢ LOẠI XE =====================
+def get_default_vehicle_file():
+    return os.path.join(os.path.dirname(__file__), "Loại_xe.csv")
+
+
+def resolve_vehicle_file(csv_path):
+    if csv_path is None:
+        csv_path = get_default_vehicle_file()
+    elif not os.path.isabs(csv_path):
+        csv_path = os.path.join(os.path.dirname(__file__), csv_path)
+    return csv_path
+
+
+def load_vehicle_types(csv_path=None):
+    csv_path = resolve_vehicle_file(csv_path)
+    try:
+        df = pd.read_csv(csv_path, encoding='utf-8-sig')
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Không tìm thấy file loại xe: {csv_path}")
+
+    df.columns = [c.strip() for c in df.columns]
+    required_columns = {'Loại xe', 'm', 'f', 'Cd', 'A', 'xi', 'it', 'rho_std'}
+    if not required_columns.issubset(set(df.columns)):
+        raise ValueError(
+            f"File loại xe phải chứa các cột: {', '.join(sorted(required_columns))}."
+        )
+    return df
+
+
+def get_vehicle_names(csv_path=None):
+    df = load_vehicle_types(csv_path)
+    return df['Loại xe'].astype(str).tolist()
+
+
+def select_vehicle_type(df, loai_xe=None, interactive=True):
+    if loai_xe is None:
+        if not interactive:
+            raise ValueError("Loại xe không được chỉ định.")
+        print("Các loại xe có sẵn:")
+        for idx, name in enumerate(df['Loại xe'], start=1):
+            print(f"  {idx}. {name}")
+        loai_xe = input("Nhập số hoặc tên loại xe muốn sử dụng: ").strip()
+
+    if loai_xe.isdigit():
+        index = int(loai_xe) - 1
+        if index < 0 or index >= len(df):
+            raise ValueError("Số loại xe không hợp lệ.")
+        row = df.iloc[index]
+    else:
+        matches = df[df['Loại xe'].astype(str).str.lower() == loai_xe.lower()]
+        if len(matches) == 0:
+            raise ValueError(f"Không tìm thấy loại xe: {loai_xe}")
+        row = matches.iloc[0]
+
+    return row
+
 
 # ===================== THÔNG SỐ XE =====================
 class ThongSoXe:
-    def __init__(self):
-        self.m = 1600
-        self.f = 0.012
-        self.g = 9.81
-        self.Cd = 0.34
-        self.A = 2.5
-        self.xi = 1.05
-        self.it = 5.0
-        self.rho_std = 1.184
+    def __init__(self, loai_xe=None, loai_xe_file=None, interactive=False):
         self.P_std = 101.3
         self.T_std = 293.15
+
+        loai_xe_file = resolve_vehicle_file(loai_xe_file)
+        if loai_xe is not None and os.path.exists(loai_xe_file):
+            df_loai_xe = load_vehicle_types(loai_xe_file)
+            try:
+                row = select_vehicle_type(df_loai_xe, loai_xe, interactive=interactive)
+            except ValueError as e:
+                raise ValueError(f"Lỗi chọn loại xe: {e}")
+
+            self.m = float(row['m'])
+            self.f = float(row['f'])
+            self.g = float(row['g']) if 'g' in row and not pd.isna(row['g']) else 9.81
+            self.Cd = float(row['Cd'])
+            self.A = float(row['A'])
+            self.xi = float(row['xi'])
+            self.it = float(row['it'])
+            self.rho_std = float(row['rho_std'])
+        else:
+            self.m = 1600
+            self.f = 0.012
+            self.g = 9.81
+            self.Cd = 0.34
+            self.A = 2.5
+            self.xi = 1.05
+            self.it = 5.0
+            self.rho_std = 1.184
 
 # ===================== HÀM ĐỌC GPX =====================
 def read_gpx_to_dataframe(gpx_file_path):
@@ -220,10 +297,36 @@ def tinh_nhien_lieu(tong_nang_luong_kJ, hieu_suat=0.28, nang_luong_1_lit_xang=33
     return tong_nang_luong_kJ / hieu_suat / nang_luong_1_lit_xang
 
 # ===================== CHƯƠNG TRÌNH CHÍNH =====================
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Tính năng tiêu thụ nhiên liệu từ file GPX")
+    parser.add_argument(
+        "--loai-xe",
+        help="Tên loại xe hoặc số lựa chọn theo file Loại_xe.csv",
+        default=None
+    )
+    parser.add_argument(
+        "--loai-xe-file",
+        help="Đường dẫn tới file CSV chứa thông số loại xe",
+        default=os.path.join(os.path.dirname(__file__), "Loại_xe.csv")
+    )
+    parser.add_argument(
+        "--thu-muc-gpx",
+        help="Thư mục chứa file GPX",
+        default=os.path.join(os.path.dirname(__file__), "file gpx")
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    ts = ThongSoXe()
+    args = parse_arguments()
+
+    try:
+        ts = ThongSoXe(loai_xe=args.loai_xe, loai_xe_file=args.loai_xe_file)
+    except Exception as e:
+        print(f"❌ Lỗi khi khởi tạo loại xe: {e}")
+        sys.exit(1)
     
-    thu_muc_gpx = "C:/Users/khai/Downloads/đồ án tn/file gpx"
+    thu_muc_gpx = args.thu_muc_gpx
     
     danh_sach_file = glob.glob(os.path.join(thu_muc_gpx, "*.gpx"))
     

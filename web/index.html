@@ -14,8 +14,12 @@
 <body>
   <div id="controls">
     <div><b>Hướng dẫn:</b> Click để chọn Start và End.</div>
+    <div style="margin: 8px 0;">
+      <label for="vehicleSelect">Loại xe:</label>
+      <select id="vehicleSelect"><option value="">Đang tải...</option></select>
+    </div>
     <button id="btnRoute">Lấy tuyến</button>
-    <button id="btnCompute">Tính năng lượng</button>
+    <button id="btnCompute">Tính nhiên liệu</button>
     <div id="status"></div>
     <hr />
     <div id="result"></div>
@@ -46,6 +50,26 @@
       }
     });
 
+    const vehicleSelect = document.getElementById('vehicleSelect');
+
+    async function loadVehicleOptions(){
+      setStatus('Loading vehicle types...');
+      try {
+        const res = await fetch('/vehicles');
+        const data = await res.json();
+        if(data.error){
+          throw new Error(data.error);
+        }
+        vehicleSelect.innerHTML = '<option value="">-- Chọn loại xe --</option>' + data.vehicles.map(v => `<option value="${v}">${v}</option>`).join('');
+        setStatus('Chọn loại xe xong.');
+      } catch (err) {
+        vehicleSelect.innerHTML = '<option value="">Lỗi tải loại xe</option>';
+        setStatus('Lỗi tải loại xe: '+err.message);
+      }
+    }
+
+    loadVehicleOptions();
+
     document.getElementById('btnRoute').onclick = async function(){
       if(!startMarker || !endMarker){ alert('Vui lòng chọn Start và End trên bản đồ'); return }
       setStatus('Requesting route...')
@@ -63,11 +87,14 @@
 
     document.getElementById('btnCompute').onclick = async function(){
       if(!routeFeature){ alert('Hãy lấy tuyến trước'); return }
+      const vehicleType = vehicleSelect.value;
+      if(!vehicleType){ alert('Vui lòng chọn loại xe'); return }
       setStatus('Computing energy...')
-      const res = await fetch('/compute', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({route: routeFeature, duration_s: duration_s})});
+      const res = await fetch('/compute', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({route: routeFeature, duration_s: duration_s, vehicle_type: vehicleType})});
       const j = await res.json();
       if(j.error){ setStatus('Error: '+j.error); return }
       const out = [];
+      out.push('Loại xe: '+(j.vehicle_type ?? 'N/A'));
       out.push('Quãng đường (km): '+(j.quang_duong_km ?? 'N/A'));
       out.push('Trạng thái giao thông: '+(j.traffic_status ?? 'N/A'));
       out.push('Tổng năng lượng (kJ): '+j.total_kJ);
