@@ -13,13 +13,15 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+WEB_DIR = os.path.join(ROOT_DIR, 'web')
+
 # Import ANN prediction helper
 from predict_fuel_ann import predict_fuel
 
-app = Flask(__name__, static_folder='../web', static_url_path='/')
+app = Flask(__name__, static_folder=WEB_DIR, static_url_path='/')
 
 # Load energy calculation module from existing file with spaces in name
-ENERGY_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'code tinh nang luong.py'))
+ENERGY_PATH = os.path.abspath(os.path.join(ROOT_DIR, 'code tinh nang luong.py'))
 if not os.path.exists(ENERGY_PATH):
     raise FileNotFoundError(f"Could not find energy file at {ENERGY_PATH}")
 spec = importlib.util.spec_from_file_location("energy_src", ENERGY_PATH)
@@ -27,6 +29,17 @@ energy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(energy)
 
 VEHICLE_FILE = os.path.join(ROOT_DIR, 'Loại_xe.csv')
+MODEL_FILES = {
+    'ANN model': os.path.join(ROOT_DIR, 'mo_hinh_ann_7_features.keras'),
+    'Scaler X': os.path.join(ROOT_DIR, 'scaler_X_7features.pkl'),
+    'Scaler y': os.path.join(ROOT_DIR, 'scaler_y_7features.pkl'),
+    'Label encoder': os.path.join(ROOT_DIR, 'label_encoder_trang_thai.pkl'),
+}
+for name, path in MODEL_FILES.items():
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Could not find {name} at {path}")
+if not os.path.exists(VEHICLE_FILE):
+    raise FileNotFoundError(f"Could not find vehicle data file at {VEHICLE_FILE}")
 
 # ORS client
 ORS_KEY = os.getenv('ORS_API_KEY')
@@ -37,7 +50,7 @@ client = openrouteservice.Client(key=ORS_KEY) if ORS_KEY else None
 
 @app.route('/')
 def index():
-    return send_from_directory(app.static_folder, 'index.html')
+    return send_from_directory(WEB_DIR, 'index.html')
 
 
 @app.route('/vehicles', methods=['GET'])
@@ -140,27 +153,49 @@ def compute_energy():
     traffic = energy.analyze_traffic_advanced(df)
     traffic_status = traffic.get('common_status', 'Bình thường')
     quang_duong_km = float(df['s_km'].iloc[-1]) if len(df) > 0 else 0.0
+    
+    # Kiểm tra quãng đường
+    if pd.isna(quang_duong_km) or quang_duong_km is None or quang_duong_km <= 0:
+        print(f"⚠️ Cảnh báo: Quãng đường {quang_duong_km} không hợp lệ, set thành 1.0")
+        quang_duong_km = 1.0
+    
+    print(f"📍 Trạng thái giao thông: {traffic_status}")
+    print(f"📍 Quãng đường: {quang_duong_km} km")
 
     # Summarize
     sums = df[['E_roll_kJ', 'E_aero_kJ', 'E_inertia_kJ', 'E_grade_kJ', 'E_curve_kJ']].sum().to_dict()
+    total_kJ = sum(sums.values())
+
+    # Kiểm tra NaN values
+    print(f"\n📊 Energy sums trước check: {sums}")
+    for key, val in sums.items():
+        if pd.isna(val) or val is None:
+            print(f"⚠️ Cảnh báo: {key} bị NaN, set thành 0")
+            sums[key] = 0.0
+        else:
+            sums[key] = float(sums[key])
+    print(f"📊 Energy sums sau check: {sums}")
     total_kJ = sum(sums.values())
 
     # ANN prediction
     try:
         fuel_ann_l = predict_fuel(
             {
-                'E_roll_kJ': sums['E_roll_kJ'],
-                'E_aero_kJ': sums['E_aero_kJ'],
-                'E_inertia_kJ': sums['E_inertia_kJ'],
-                'E_grade_kJ': sums['E_grade_kJ'],
-                'E_curve_kJ': sums['E_curve_kJ'],
+                'E_roll_kJ': float(sums['E_roll_kJ']),
+                'E_aero_kJ': float(sums['E_aero_kJ']),
+                'E_inertia_kJ': float(sums['E_inertia_kJ']),
+                'E_grade_kJ': float(sums['E_grade_kJ']),
+                'E_curve_kJ': float(sums['E_curve_kJ']),
             },
-            quang_duong_km=quang_duong_km,
+            quang_duong_km=float(quang_duong_km),
             traffic_status=traffic_status
         )
+        print(f"✅ Dự đoán ANN thành công: {fuel_ann_l} lít")
     except Exception as e:
+        print(f"❌ Lỗi ANN prediction: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         fuel_ann_l = None
-        print(f"ANN prediction failed: {e}")
 
     resp = {
         'vehicle_type': vehicle_type,

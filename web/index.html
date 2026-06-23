@@ -75,6 +75,11 @@
       setStatus('Requesting route...')
       const s = startMarker.getLatLng(); const e = endMarker.getLatLng();
       const res = await fetch('/route', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({start:[s.lat,s.lng], end:[e.lat,e.lng]})});
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('Error: ' + (text || res.statusText));
+        return;
+      }
       const j = await res.json();
       if(j.error){ setStatus('Error: '+j.error); return }
       routeFeature = j.route;
@@ -91,6 +96,11 @@
       if(!vehicleType){ alert('Vui lòng chọn loại xe'); return }
       setStatus('Computing energy...')
       const res = await fetch('/compute', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({route: routeFeature, duration_s: duration_s, vehicle_type: vehicleType})});
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('Error: ' + (text || res.statusText));
+        return;
+      }
       const j = await res.json();
       if(j.error){ setStatus('Error: '+j.error); return }
       const out = [];
