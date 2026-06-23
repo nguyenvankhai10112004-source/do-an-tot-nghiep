@@ -4,5 +4,5 @@ pandas
 geopy
 gpxpy
 requests
-tensorflow-cpu==2.14.1
+tensorflow-cpu==2.21.0
 gunicorn
