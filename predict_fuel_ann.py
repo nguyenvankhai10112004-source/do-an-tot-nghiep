@@ -3,21 +3,13 @@ import joblib
 import numpy as np
 from tensorflow.keras.models import load_model
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'mo_hinh_ann_7_features.keras')
-SCALER_X_PATH = os.path.join(BASE_DIR, 'scaler_X_7features.pkl')
-SCALER_Y_PATH = os.path.join(BASE_DIR, 'scaler_y_7features.pkl')
-LABEL_ENCODER_PATH = os.path.join(BASE_DIR, 'label_encoder_trang_thai.pkl')
-
-
-def assert_file_exists(path):
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Required model file not found: {path}")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'mo_hinh_ann_7_features.keras')
+SCALER_X_PATH = os.path.join(os.path.dirname(__file__), 'scaler_X_7features.pkl')
+SCALER_Y_PATH = os.path.join(os.path.dirname(__file__), 'scaler_y_7features.pkl')
+LABEL_ENCODER_PATH = os.path.join(os.path.dirname(__file__), 'label_encoder_trang_thai.pkl')
 
 
 def load_ann_model():
-    for path in (MODEL_PATH, SCALER_X_PATH, SCALER_Y_PATH, LABEL_ENCODER_PATH):
-        assert_file_exists(path)
     model = load_model(MODEL_PATH)
     scaler_X = joblib.load(SCALER_X_PATH)
     scaler_y = joblib.load(SCALER_Y_PATH)

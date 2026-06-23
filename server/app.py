@@ -13,15 +13,13 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-WEB_DIR = os.path.join(ROOT_DIR, 'web')
-
 # Import ANN prediction helper
 from predict_fuel_ann import predict_fuel
 
-app = Flask(__name__, static_folder=WEB_DIR, static_url_path='/')
+app = Flask(__name__, static_folder='../web', static_url_path='/')
 
 # Load energy calculation module from existing file with spaces in name
-ENERGY_PATH = os.path.abspath(os.path.join(ROOT_DIR, 'code tinh nang luong.py'))
+ENERGY_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'code tinh nang luong.py'))
 if not os.path.exists(ENERGY_PATH):
     raise FileNotFoundError(f"Could not find energy file at {ENERGY_PATH}")
 spec = importlib.util.spec_from_file_location("energy_src", ENERGY_PATH)
@@ -29,17 +27,6 @@ energy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(energy)
 
 VEHICLE_FILE = os.path.join(ROOT_DIR, 'Loại_xe.csv')
-MODEL_FILES = {
-    'ANN model': os.path.join(ROOT_DIR, 'mo_hinh_ann_7_features.keras'),
-    'Scaler X': os.path.join(ROOT_DIR, 'scaler_X_7features.pkl'),
-    'Scaler y': os.path.join(ROOT_DIR, 'scaler_y_7features.pkl'),
-    'Label encoder': os.path.join(ROOT_DIR, 'label_encoder_trang_thai.pkl'),
-}
-for name, path in MODEL_FILES.items():
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Could not find {name} at {path}")
-if not os.path.exists(VEHICLE_FILE):
-    raise FileNotFoundError(f"Could not find vehicle data file at {VEHICLE_FILE}")
 
 # ORS client
 ORS_KEY = os.getenv('ORS_API_KEY')
@@ -50,7 +37,7 @@ client = openrouteservice.Client(key=ORS_KEY) if ORS_KEY else None
 
 @app.route('/')
 def index():
-    return send_from_directory(WEB_DIR, 'index.html')
+    return send_from_directory(app.static_folder, 'index.html')
 
 
 @app.route('/vehicles', methods=['GET'])

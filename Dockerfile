@@ -13,5 +13,5 @@ RUN pip install -r requirements.txt
 # Expose port for local testing (not used on Render)
 EXPOSE 10000
 
-# Start gunicorn server using the Render-provided port
-CMD gunicorn server.app:app --bind 0.0.0.0:$PORT
+# Start gunicorn server
+CMD ["gunicorn", "server.app:app", "--bind", "0.0.0.0:10000"]
