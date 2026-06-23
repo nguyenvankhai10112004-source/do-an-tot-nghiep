@@ -6,4 +6,5 @@ gpxpy
 requests
 tensorflow-cpu==2.21.0
 joblib
+scikit-learn
 gunicorn
