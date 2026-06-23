@@ -1,11 +1,9 @@
 services:
   - type: web
     name: do-an-tot-nghiep
-    env: python
+    env: docker
     region: oregon
     branch: main
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn server.app:app
     envVars:
       - key: ORS_API_KEY
         sync: false
